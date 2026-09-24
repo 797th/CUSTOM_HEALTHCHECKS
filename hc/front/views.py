@@ -512,7 +512,13 @@ def docs_search(request: HttpRequest) -> HttpResponse:
     # Wrap the query in double quotes to get a valid FTS string
     # https://www.sqlite.org/fts5.html#full_text_query_syntax
     q = '"%s"' % form.cleaned_data["q"]
-    con = sqlite3.connect(settings.BASE_DIR / "search.db")
+    search_db = settings.BASE_DIR / "search.db"
+    if not search_db.exists():
+        # The search index is a build artifact (populate_searchdb). If it is
+        # missing (fresh checkout), return an empty result set instead of
+        # raising a 500.
+        return render(request, "front/docs_search.html", {"results": []})
+    con = sqlite3.connect(search_db)
     cur = con.cursor()
     res = cur.execute(query, (q,))
 

@@ -13,7 +13,7 @@ from uuid import UUID
 from cronsim import CronSim, CronSimError
 from django.conf import settings
 from django.core.signing import BadSignature
-from django.db import connection
+from django.db import IntegrityError, connection
 from django.db.models import Prefetch
 from django.db.models.functions import Length
 from django.http import (
@@ -36,6 +36,11 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from pydantic_core import PydanticCustomError
 
 from hc.accounts.models import Profile, Project
+from hc.api.auto_provision import (
+    create_check_for_ping,
+    get_or_create_check_for_project,
+    parse_auto_create_params,
+)
 from hc.api.decorators import ApiRequest, authorize, authorize_read, cors
 from hc.api.forms import FlipsFiltersForm
 from hc.api.models import Channel, Check, Flip, Notification, Ping, prepare_durations
@@ -176,6 +181,54 @@ def valid_ip(ip: str) -> bool:
         return False
 
 
+def _create_check_for_uuid_ping(code: UUID, params: dict[str, object]) -> Check | None:
+    """Create a check with the given UUID for a ping-triggered auto-create.
+
+    The UUID-based ping URL contains no project information, so the new
+    check needs a project. We use the first project owned by the
+    AUTO_PROVISION_USER (if configured) — a single-tenant self-hosted setup
+    normally has exactly one project. Returns None (caller answers 404)
+    when there is no eligible project or the project is over its
+    auto-provisioning limit.
+
+    Race-safe: takes a select_for_update() lock on the project row and
+    falls back to a plain re-fetch when a concurrent request created the
+    same UUID first (idempotent — the second request just pings).
+    """
+    username = getattr(settings, "AUTO_PROVISION_USER", None)
+    if not username:
+        return None
+
+    from django.contrib.auth.models import User
+
+    try:
+        user = User.objects.get(username=username)
+    except User.DoesNotExist:
+        return None
+
+    project = Project.objects.filter(owner=user).first()
+    if project is None:
+        return None
+
+    from django.db import transaction
+
+    with transaction.atomic():
+        locked_project = Project.objects.select_for_update().get(id=project.id)
+        profile = locked_project.owner_profile
+        num_used = locked_project.check_set.count()
+        if num_used >= profile.check_limit * 2:
+            return None
+
+        if Check.objects.filter(code=code).exists():
+            # A concurrent request created it first.
+            return Check.objects.get(code=code)
+
+        try:
+            return create_check_for_ping(locked_project, code=code, params=params)
+        except IntegrityError:
+            return Check.objects.get(code=code)
+
+
 @csrf_exempt
 @never_cache
 def ping(
@@ -189,7 +242,17 @@ def ping(
         try:
             check = Check.objects.get(code=code)
         except Check.DoesNotExist:
-            return HttpResponseNotFound("not found")
+            # Auto-create for UUID pings: if the caller asks for it with
+            # ?create=1, create the check with this exact UUID, so the ping
+            # URL stays valid forever. The ping itself is recorded, so the
+            # first ping is never lost.
+            if request.GET.get("create") == "1" and is_valid_uuid_string(str(code)):
+                params = parse_auto_create_params(request)
+                check = _create_check_for_uuid_ping(code, params)
+                if check is None:
+                    return HttpResponseNotFound("not found")
+            else:
+                return HttpResponseNotFound("not found")
 
     if exitstatus is not None and exitstatus > 255:
         return HttpResponseBadRequest("invalid url format")
@@ -259,24 +322,26 @@ def ping_by_slug(
     try:
         check = Check.objects.get(slug=slug, project__ping_key=ping_key)
     except Check.DoesNotExist:
-        if request.GET.get("create") != "1":
-            return HttpResponseNotFound("not found")
-
         try:
             project = Project.objects.get(ping_key=ping_key)
         except Project.DoesNotExist:
             return HttpResponseNotFound("not found")
 
-        profile = project.owner_profile
-        # When using auto-provisioning, users are allowed to temporarily
-        # exceed their check limit up to 2 times.
-        if profile.num_checks_used() >= profile.check_limit * 2:
+        if request.GET.get("create") == "0":
+            # Strict mode: the caller explicitly opted out of auto-provisioning.
             return HttpResponseNotFound("not found")
 
-        check = Check(project=project, name=slug, slug=slug)
-        check.save()
-        check.assign_all_channels()
-        created = True
+        params = parse_auto_create_params(request)
+        try:
+            created_check, created = get_or_create_check_for_project(
+                project, slug=slug, params=params
+            )
+        except Check.MultipleObjectsReturned:
+            return HttpResponse("ambiguous slug", status=409)
+        if created_check is None:
+            # The project is at its auto-provisioning check limit.
+            return HttpResponseNotFound("not found")
+        check = created_check
     except Check.MultipleObjectsReturned:
         return HttpResponse("ambiguous slug", status=409)
 

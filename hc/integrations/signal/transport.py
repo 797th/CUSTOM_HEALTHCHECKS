@@ -127,7 +127,10 @@ class Signal(Transport):
             parts = settings.SIGNAL_CLI_SOCKET.split(":")
             address = (parts[0], int(parts[1]))
         else:
-            stype = socket.AF_UNIX
+            # Not all platforms define AF_UNIX (e.g. Windows without AF_UNIX
+            # support). Fall back to 0 and let connect() fail with OSError,
+            # which the code below already converts to a TransportError.
+            stype = getattr(socket, "AF_UNIX", socket.AF_INET)
             address = settings.SIGNAL_CLI_SOCKET
 
         with socket.socket(stype, socket.SOCK_STREAM) as s:

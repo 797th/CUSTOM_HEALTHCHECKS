@@ -34,8 +34,25 @@ using a non-unique slug, SITE_NAME will return the "409 Conflict" HTTP status co
 and ignore the request.</p>
 <p>Slug URLs optionally support <strong>auto-provisioning</strong>: if you make a Pinging API request
 to a slug with no corresponding check, SITE_NAME will create the check automatically.
-Auto-provisioning is off by default. To enable it, add a <code>create=1</code> query parameter
-to the ping URL.</p>
+In this fork, auto-provisioning is <strong>on by default</strong>: pinging an unknown slug creates
+the check and returns HTTP 201. Pass <code>create=0</code> to get the classic strict 404 behavior
+(or <code>create=1</code> for compatibility with upstream healthchecks).</p>
+<p>On auto-creation you can tune the new check via query parameters (applied only at
+creation time — they never modify an existing check):</p>
+<ul>
+<li><code>name</code> — display name (defaults to the slug)</li>
+<li><code>period</code> — expected period in seconds, 60..31536000 (default: 1 day)</li>
+<li><code>grace</code> — grace time in seconds, 60..31536000 (default: 1 hour)</li>
+<li><code>tags</code> — space-separated tag string</li>
+<li><code>desc</code> — description text</li>
+<li><code>channels</code> — <code>*</code> (all project channels), empty (none), or comma-separated channel
+  names/codes (default: all project channels)</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code><span class="n">GET</span> <span class="n">PING_ENDPOINT</span><span class="o">&lt;</span><span class="n">ping</span><span class="o">-</span><span class="n">key</span><span class="o">&gt;/</span><span class="n">srv01</span><span class="err">?</span><span class="n">period</span><span class="o">=</span><span class="mi">300</span><span class="o">&amp;</span><span class="n">grace</span><span class="o">=</span><span class="mi">120</span><span class="o">&amp;</span><span class="n">tags</span><span class="o">=</span><span class="n">prod</span><span class="p">,</span><span class="n">eu</span>
+</code></pre></div>
+
+<p>See the <a href="../autoprovisioning/">Auto Provisioning guide</a> for more details.</p>
 <h2>Rate Limits</h2>
 <p>Please be nice to our servers. Do not ping a check more frequently than is necessary.
 If you ping a check more than 5 times per minute, some of the requests may get rate

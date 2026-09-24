@@ -106,8 +106,9 @@ PING_KEY=fixme-your-ping-key-here
 # Use system's hostname as check's slug
 SLUG=$(hostname)
 
-# Construct a ping URL and append "?create=1" at the end:
-URL=PING_ENDPOINT$PING_KEY/$SLUG?create=1
+# Construct a ping URL. Auto provisioning is on by default for slug URLs;
+# optionally pass parameters to tune the newly created check:
+URL="PING_ENDPOINT$PING_KEY/$SLUG?period=300&grace=120"
 
 # Send a ping:
 curl -m 10 --retry 5 $URL

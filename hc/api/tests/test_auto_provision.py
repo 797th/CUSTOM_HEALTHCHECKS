@@ -154,6 +154,44 @@ class SlugAutoProvisionExistingTestCase(BaseTestCase):
             r = self.client.get(self.url)
         self.assertEqual(r.status_code, 404)
 
+    def test_race_loser_refetches_winner_check_and_pings_it(self) -> None:
+        # Simulate a concurrent request winning the create race: our create
+        # raises IntegrityError *after* the winner committed. The endpoint
+        # must re-fetch the winner's check and record the ping on it.
+        from django.db import IntegrityError
+
+        self.check.delete()
+
+        def losing_create(project, *, slug, params):
+            # The "winner" commits the check right before our create runs:
+            Check.objects.create(project=project, name=slug, slug=slug)
+            raise IntegrityError("duplicate key")
+
+        with patch(
+            "hc.api.auto_provision.create_check_for_ping", side_effect=losing_create
+        ):
+            r = self.client.get(self.url)
+
+        self.assertEqual(r.status_code, 200)  # loser re-fetched and pinged
+        self.assertEqual(Check.objects.count(), 1)
+        self.assertEqual(Ping.objects.count(), 1)
+
+    def test_auto_provisioning_is_on_by_default_without_any_query(self) -> None:
+        self.check.delete()
+        r = self.client.get(self.url)  # no create=1, no params at all
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(Check.objects.count(), 1)
+
+    def test_slug_auto_create_race_on_same_slug_two_requests(self) -> None:
+        # Two sequential "first pings" for the same slug must not duplicate.
+        self.check.delete()
+        r1 = self.client.get(self.url)
+        r2 = self.client.get(self.url)
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(Check.objects.count(), 1)
+        self.assertEqual(Ping.objects.count(), 2)
+
     def test_create_0_on_existing_check_still_pings(self) -> None:
         # create=0 only disables *creation*, not pinging existing checks.
         r = self.client.get(self.url + "?create=0")

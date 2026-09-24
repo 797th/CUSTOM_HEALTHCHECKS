@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Callable
 from typing import cast
 
 from django.conf import settings
 from django.contrib import auth
+from django.contrib.auth.models import User
 from django.core.exceptions import MiddlewareNotUsed
 from django.http import HttpRequest, HttpResponse
 
 from hc.accounts.http import AuthenticatedHttpRequest
 from hc.accounts.models import Profile
+
+# Imported lazily inside AutoLoginMiddleware._get_user to avoid a circular
+# import (hc.accounts.views imports from hc.accounts.models).
+logger = logging.getLogger(__name__)
 
 MiddlewareFunc = Callable[[HttpRequest], HttpResponse]
 
@@ -24,6 +31,72 @@ class TeamAccessMiddleware:
 
         request = cast(AuthenticatedHttpRequest, request)
         request.profile = Profile.objects.for_user(request.user)
+        return self.get_response(request)
+
+
+class AutoLoginMiddleware:
+    """Auto-authenticate every request as a fixed local user.
+
+    Enabled by setting AUTO_LOGIN_USER (a username or email). Intended for
+    single-tenant, self-hosted deployments on trusted networks where the web
+    dashboard should be reachable without a login form. Ping endpoints are
+    unaffected (they never required authentication).
+
+    If the configured user does not exist, it is created automatically
+    (with a default project) so the deployment works on a fresh database.
+    """
+
+    def __init__(self, get_response: MiddlewareFunc) -> None:
+        if not settings.AUTO_LOGIN_USER:
+            raise MiddlewareNotUsed()
+
+        self.get_response = get_response
+        self._user: User | None = None
+
+    def _get_user(self) -> User | None:
+        # Cache the lookup: this runs on every request.
+        if self._user is not None:
+            return self._user
+
+        spec = settings.AUTO_LOGIN_USER
+        if not spec:
+            return None
+        assert isinstance(spec, str)
+
+        user = User.objects.filter(username=spec).first() or User.objects.filter(
+            email=spec
+        ).first()
+        if user is None:
+            # Fresh deployment: create the user (plus default project/check)
+            # so the dashboard works immediately.
+            from hc.accounts.views import _make_user
+
+            email = spec if "@" in spec else f"{spec}@localhost"
+            try:
+                user = _make_user(email)
+                if "@" not in spec:
+                    user.username = spec
+                    user.save()
+            except Exception:
+                logger.exception("auto-login user creation failed")
+                return None
+
+        self._user = user
+        return user
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        if request.user.is_authenticated:
+            return self.get_response(request)
+
+        user = self._get_user()
+        if user is not None:
+            # Annotate the user with its backend so auth.login() works
+            # even when multiple AUTHENTICATION_BACKENDS are configured.
+            backend = settings.AUTHENTICATION_BACKENDS[0]
+            user.backend = backend  # type: ignore[attr-defined]
+            request.user = user
+            auth.login(request, user)
+
         return self.get_response(request)
 
 

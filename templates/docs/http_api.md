@@ -45,8 +45,28 @@ and ignore the request.
 
 Slug URLs optionally support **auto-provisioning**: if you make a Pinging API request
 to a slug with no corresponding check, SITE_NAME will create the check automatically.
-Auto-provisioning is off by default. To enable it, add a `create=1` query parameter
-to the ping URL.
+In this fork, auto-provisioning is **on by default**: pinging an unknown slug creates
+the check and returns HTTP 201. Pass `create=0` to get the classic strict 404 behavior
+(or `create=1` for compatibility with upstream healthchecks).
+
+On auto-creation you can tune the new check via query parameters (applied only at
+creation time — they never modify an existing check):
+
+* `name` — display name (defaults to the slug)
+* `period` — expected period in seconds, 60..31536000 (default: 1 day)
+* `grace` — grace time in seconds, 60..31536000 (default: 1 hour)
+* `tags` — space-separated tag string
+* `desc` — description text
+* `channels` — `*` (all project channels), empty (none), or comma-separated channel
+  names/codes (default: all project channels)
+
+Example:
+
+```
+GET PING_ENDPOINT<ping-key>/srv01?period=300&grace=120&tags=prod,eu
+```
+
+See the [Auto Provisioning guide](../autoprovisioning/) for more details.
 
 ## Rate Limits
 

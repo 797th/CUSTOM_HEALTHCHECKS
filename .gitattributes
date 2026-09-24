@@ -7,4 +7,3 @@
 *.ttf binary
 *.eot binary
 *.svg text eol=lf
-search.db binary

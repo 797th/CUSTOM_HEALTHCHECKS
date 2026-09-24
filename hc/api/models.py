@@ -542,7 +542,21 @@ class Check(models.Model):
             self.n_pings = models.F("n_pings") + 1
             body_lowercase = body.decode(errors="replace").lower()
             self.has_confirmation_link = "confirm" in body_lowercase
-            self.save()
+            # Hot path: update only the fields we touched instead of writing
+            # the whole row (saves round-trips and avoids clobbering columns
+            # changed concurrently, e.g. via the Management API).
+            self.save(
+                update_fields=(
+                    "last_ping",
+                    "last_duration",
+                    "last_start",
+                    "last_start_rid",
+                    "alert_after",
+                    "n_pings",
+                    "has_confirmation_link",
+                    "status",
+                )
+            )
 
             ping = Ping(owner=self)
             ping.n = self.n_pings
@@ -699,6 +713,19 @@ class Ping(models.Model):
     object_size = models.IntegerField(null=True)
     exitstatus = models.SmallIntegerField(null=True)
     rid = models.UUIDField(null=True)
+
+    class Meta:
+        # Hot-path composite indexes (see migration 0124). The ping log
+        # endpoints filter by (owner, n) and (owner, created); pruning and
+        # duration calculations scan by (owner, created). Without them,
+        # Postgres falls back to owner_id lookups + filter, which degrades
+        # once a check accumulates tens of thousands of pings.
+        indexes = (
+            models.Index(fields=["owner", "n"], name="api_ping_owner_n_idx"),
+            models.Index(
+                fields=["owner", "created"], name="api_ping_owner_created_idx"
+            ),
+        )
 
     class GetBodyError(Exception):
         pass

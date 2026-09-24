@@ -36,7 +36,10 @@ class Command(BaseCommand):
         if delta.days > 14:
             return
 
-        formatted = profile.deletion_scheduled_date.strftime("%B %-d, %Y")
+        # "%-d" (day without leading zero) is not portable across platforms
+        # (Windows strftime rejects it), so format via the day number:
+        date = profile.deletion_scheduled_date
+        formatted = date.strftime("%B") + f" {date.day}, {date.year}"
         name = f"{settings.SITE_NAME} Account Deletion on {formatted}"
         desc = (
             f"The {settings.SITE_NAME} account registered to {profile.user.email} "

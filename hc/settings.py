@@ -144,6 +144,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "hc.accounts.middleware.CustomHeaderMiddleware",
+    "hc.accounts.middleware.AutoLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "hc.accounts.middleware.TeamAccessMiddleware",
@@ -160,6 +161,12 @@ AUTHENTICATION_BACKENDS = [
 REMOTE_USER_HEADER = os.getenv("REMOTE_USER_HEADER")
 if REMOTE_USER_HEADER:
     AUTHENTICATION_BACKENDS = ["hc.accounts.backends.CustomHeaderBackend"]
+
+# Auto-login: when AUTO_LOGIN_USER is set (username or email), every request
+# to the web UI is automatically authenticated as that user — no login form.
+# Intended for single-tenant, self-hosted deployments on trusted networks.
+# Leave unset to keep the standard login flow.
+AUTO_LOGIN_USER = os.getenv("AUTO_LOGIN_USER", "") or None
 
 ROOT_URLCONF = "hc.urls"
 
@@ -226,7 +233,7 @@ if os.getenv("DB") == "postgres":
             "NAME": os.getenv("DB_NAME", "hc"),
             "USER": os.getenv("DB_USER", "postgres"),
             "PASSWORD": envsecret("DB_PASSWORD", ""),
-            "CONN_MAX_AGE": envint("DB_CONN_MAX_AGE", "0"),
+            "CONN_MAX_AGE": envint("DB_CONN_MAX_AGE", "60"),
             "TEST": {"CHARSET": "UTF8"},
             "OPTIONS": {
                 "application_name": "hc",
@@ -444,6 +451,11 @@ INTEGRATIONS_ALLOW_PRIVATE_IPS = envbool("INTEGRATIONS_ALLOW_PRIVATE_IPS", "Fals
 
 # Zulip
 ZULIP_ENABLED = envbool("ZULIP_ENABLED", "True")
+
+# UUID-ping auto-provisioning: the username of the account that owns checks
+# created via /ping/<uuid>?create=1. When unset (the default), UUID pings to
+# unknown checks return 404 (upstream behavior).
+AUTO_PROVISION_USER = os.getenv("AUTO_PROVISION_USER", "") or None
 
 # Read additional configuration from hc/local_settings.py if it exists
 if (BASE_DIR / "hc/local_settings.py").exists():

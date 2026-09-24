@@ -208,9 +208,10 @@ class Command(BaseCommand):
                 pass
 
             # Either all workers are busy or there are no unprocessed flips.
-            # Wait a bit:
+            # Wait a bit. Short poll: flips are time-critical (a missed
+            # "down" flip delays alerts by up to the poll interval).
             if not self.shutdown:
-                time.sleep(2)
+                time.sleep(0.2)
 
         self.executor.shutdown(wait=True)
         return "Done."

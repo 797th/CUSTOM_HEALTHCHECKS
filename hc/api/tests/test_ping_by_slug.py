@@ -86,7 +86,8 @@ class PingBySlugTestCase(BaseTestCase):
         self.check.delete()
         channel = Channel.objects.create(project=self.project)
 
-        r = self.client.get(self.url + "?create=1")
+        # Auto-provisioning is on by default: no create=1 needed.
+        r = self.client.get(self.url)
         self.assertEqual(r.content, b"Created")
         self.assertEqual(r.status_code, 201)
 
@@ -97,9 +98,10 @@ class PingBySlugTestCase(BaseTestCase):
         # It should assign all channels to the new check
         self.assertEqual(check.channel_set.get(), channel)
 
-    def test_auto_provisioning_is_off_by_default(self) -> None:
+    def test_auto_provisioning_can_be_disabled_with_create_0(self) -> None:
+        """Auto-provisioning is on by default; create=0 opts out (strict 404)."""
         self.check.delete()
-        r = self.client.get(self.url)
+        r = self.client.get(self.url + "?create=0")
         self.assertEqual(r.status_code, 404)
         self.assertFalse(Check.objects.exists())
 
@@ -117,5 +119,5 @@ class PingBySlugTestCase(BaseTestCase):
 
         # Alice's account now has 2 checks, so is exactly 2 times over the check limit.
         # Autoprovisioning should fail now:
-        r = self.client.get(f"/ping/{self.project.ping_key}/foo3?create=1")
+        r = self.client.get(f"/ping/{self.project.ping_key}/foo3")
         self.assertEqual(r.status_code, 404)
