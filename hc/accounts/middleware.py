@@ -46,16 +46,24 @@ class AutoLoginMiddleware:
     (with a default project) so the deployment works on a fresh database.
     """
 
+    # Re-lookup the user at most this often. The cache must not serve a
+    # deleted/renamed user forever (the old cache lived for the process's
+    # whole life); but a per-request DB lookup is wasteful for a fixed user.
+    _USER_TTL_S = 300.0
+
     def __init__(self, get_response: MiddlewareFunc) -> None:
         if not settings.AUTO_LOGIN_USER:
             raise MiddlewareNotUsed()
 
         self.get_response = get_response
         self._user: User | None = None
+        self._user_ts: float = 0.0
 
     def _get_user(self) -> User | None:
         # Cache the lookup: this runs on every request.
-        if self._user is not None:
+        import time as _time
+
+        if self._user is not None and (_time.monotonic() - self._user_ts) < self._USER_TTL_S:
             return self._user
 
         spec = settings.AUTO_LOGIN_USER
@@ -82,6 +90,7 @@ class AutoLoginMiddleware:
                 return None
 
         self._user = user
+        self._user_ts = _time.monotonic()
         return user
 
     def __call__(self, request: HttpRequest) -> HttpResponse:

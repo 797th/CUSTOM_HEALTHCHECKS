@@ -1,0 +1,59 @@
+# Deadman checks for the 797th stack (checks-as-code).
+# Provisioned by scripts/provision_checks.py — one ping per check creates it
+# (fork auto-provisioning); re-runs are idempotent.
+#
+# period  = seconds between expected pings
+# grace   = seconds after period before the check flips "down"
+# tags    = filter/group labels in the healthchecks UI
+
+checks:
+  # ── Core services: compose healthchecks ping these (success pings) ──
+  - slug: postgres-1m
+    name: Postgres (contactdb)
+    period: 60
+    grace: 120
+    tags: db compose
+  - slug: api-5m
+    name: FastAPI backend
+    period: 300
+    grace: 300
+    tags: api compose
+  - slug: scraper-one-5m
+    name: Scrapling extraction service
+    period: 300
+    grace: 300
+    tags: scraper compose
+  - slug: searxng-5m
+    name: SearXNG metasearch
+    period: 300
+    grace: 300
+    tags: search compose
+  - slug: falkordb-5m
+    name: FalkorDB graph store
+    period: 300
+    grace: 300
+    tags: graph compose
+  - slug: trawl-10m
+    name: Trawl browser-pool API
+    period: 600
+    grace: 600
+    tags: trawl compose
+
+  # ── Backend scheduler jobs (backend pings start/OK/fail) ──
+  - slug: scheduler-storage-check
+    name: Storage budget scheduler
+    period: 900
+    grace: 600
+    tags: scheduler storage
+  - slug: scheduler-hard-purge
+    name: Hard-purge (grace expiry)
+    period: 86400
+    grace: 7200
+    tags: scheduler retention
+
+  # ── Backups (nightly pg_dump deadman) ──
+  - slug: backup-nightly
+    name: Postgres nightly dump
+    period: 86400
+    grace: 14400
+    tags: backup critical

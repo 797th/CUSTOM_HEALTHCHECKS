@@ -43,7 +43,7 @@ from hc.api.auto_provision import (
 )
 from hc.api.decorators import ApiRequest, authorize, authorize_read, cors
 from hc.api.forms import FlipsFiltersForm
-from hc.api.models import Channel, Check, Flip, Notification, Ping, prepare_durations
+from hc.api.models import Channel, Check, Flip, Notification, Ping, TokenBucket, prepare_durations
 from hc.lib.badges import check_signature, get_badge_svg, get_badge_url
 from hc.lib.signing import unsign_bounce_id
 from hc.lib.string import is_valid_uuid_string, match_keywords
@@ -247,6 +247,13 @@ def ping(
             # URL stays valid forever. The ping itself is recorded, so the
             # first ping is never lost.
             if request.GET.get("create") == "1" and is_valid_uuid_string(str(code)):
+                # Rate-limit the create path (DB writes): a UUID flood must
+                # not mint unlimited checks. Same bucket as slug auto-create.
+                remote = request.META.get(
+                    "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")
+                ).split(",")[0]
+                if not TokenBucket.authorize(f"ping-create-{remote}", 100, 60):
+                    return HttpResponse("rate limited", status=429)
                 params = parse_auto_create_params(request)
                 check = _create_check_for_uuid_ping(code, params)
                 if check is None:
@@ -317,6 +324,18 @@ def ping_by_slug(
 ) -> HttpResponse:
     if slug != slug.lower():
         return HttpResponseBadRequest("invalid url format")
+
+    # Abuse guard: auto-provisioning performs DB writes (SELECT project,
+    # SELECT check, possible INSERT). A token-bucket rate limit per source IP
+    # keeps a ping flood from turning into a DB write flood. Legitimate
+    # monitors ping at most a few times a minute per URL; 100 requests/min
+    # per IP is far above any real workload here.
+    if request.GET.get("create") not in ("0", None):
+        # Only gate the create path: plain pings to existing checks are
+        # single-SELECT and cheap, and internal infra pings them constantly.
+        remote = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")).split(",")[0]
+        if not TokenBucket.authorize(f"ping-create-{remote}", 100, 60):
+            return HttpResponse("rate limited", status=429)
 
     created = False
     try:
